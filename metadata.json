@@ -1,0 +1,5 @@
+{
+  "name": "Copy of suivi journalière v3",
+  "description": "An application for daily tracking of tasks performed by an employee, inspired by a classic timesheet format. Users can log hours against billable and non-billable tasks, with automatic calculation of daily, weekly, and overtime totals.",
+  "requestFramePermissions": []
+}
