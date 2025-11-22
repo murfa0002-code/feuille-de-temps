@@ -1,3 +1,4 @@
+
 import React from 'react';
 import { AppView } from '../types';
 
@@ -14,7 +15,7 @@ const NavBar: React.FC<NavBarProps> = ({ currentView, setView, userRole, pending
   const inactiveStyle = "bg-white text-gray-700 hover:bg-gray-100";
 
   return (
-    <nav className="mb-6 p-1.5 bg-gray-200 rounded-lg flex justify-center space-x-2" role="navigation" aria-label="Main navigation">
+    <nav className="mb-6 p-1.5 bg-gray-200 rounded-lg flex flex-wrap justify-center gap-2" role="navigation" aria-label="Main navigation">
       <button 
         onClick={() => setView('timesheet')}
         className={`${navButtonStyle} ${currentView === 'timesheet' ? activeStyle : inactiveStyle}`}
@@ -22,6 +23,15 @@ const NavBar: React.FC<NavBarProps> = ({ currentView, setView, userRole, pending
       >
         Feuille de temps
       </button>
+      
+      <button 
+        onClick={() => setView('todo_list')}
+        className={`${navButtonStyle} ${currentView === 'todo_list' ? activeStyle : inactiveStyle}`}
+        aria-current={currentView === 'todo_list' ? 'page' : undefined}
+      >
+        To-Do List / Objectifs
+      </button>
+
        {userRole === 'admin' && (
         <button 
           onClick={() => setView('detailed_analysis')}

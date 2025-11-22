@@ -1,3 +1,5 @@
+
+
 export enum TaskCategory {
   CHARGEABLE = 'Temps chargeable',
   NON_CHARGEABLE = 'Temps non chargeable',
@@ -8,6 +10,14 @@ export interface Task {
   name: string;
   category: TaskCategory;
   hours: number[]; // [Mon, Tue, Wed, Thu, Fri, SatSun] -> 6 elements
+}
+
+export interface TodoItem {
+  id: string;
+  text: string;
+  completed: boolean;
+  dayIndex: number; // 0 to 5 (based on DAYS_OF_WEEK constant)
+  updated_at?: string;
 }
 
 // Kept for legacy component props, but Profile is the new source of truth
@@ -34,6 +44,7 @@ export interface TimesheetData {
   start_date: string;
   end_date: string;
   tasks: Task[];
+  todo_list?: TodoItem[]; // New field for weekly objectives
   normal_hours: number[];
   status: 'draft' | 'submitted' | 'approved';
   created_at?: string;
@@ -49,4 +60,4 @@ export interface ChargeableTask {
   profiles?: { name: string }; // For joining proposer name
 }
 
-export type AppView = 'timesheet' | 'analysis' | 'detailed_analysis' | 'admin_tasks';
+export type AppView = 'timesheet' | 'todo_list' | 'analysis' | 'detailed_analysis' | 'admin_tasks';

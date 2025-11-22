@@ -1,15 +1,14 @@
 
-
-
 import React, { useState, useMemo, useCallback, useEffect } from 'react';
 import { v4 as uuidv4 } from 'uuid';
-import { TimesheetData, Task, TaskCategory, AppView, Profile, ChargeableTask } from './types';
+import { TimesheetData, Task, TaskCategory, AppView, Profile, ChargeableTask, TodoItem } from './types';
 import { INITIAL_NON_CHARGEABLE_TASKS, NORMAL_HOURS, DAYS_OF_WEEK } from './constants';
 import Header from './components/Header';
 import Timesheet from './components/Timesheet';
 import NavBar from './components/NavBar';
 import AnalysisPage from './components/AnalysisPage';
 import DetailedAnalysisPage from './components/DetailedAnalysisPage';
+import TodoListPage from './components/TodoListPage';
 import Modal from './components/Modal';
 import LoginPage from './components/LoginPage';
 import AdminTaskManagementPage from './components/AdminTaskManagementPage';
@@ -31,6 +30,7 @@ const createNewTimesheet = (employeeId: string): Omit<TimesheetData, 'id' | 'cre
     start_date: startDate.toISOString().split('T')[0],
     end_date: endDate.toISOString().split('T')[0],
     tasks: [...INITIAL_NON_CHARGEABLE_TASKS.map(task => ({...task, id: uuidv4(), hours: Array(6).fill(0)}))],
+    todo_list: [], // Initialize empty to-do list
     normal_hours: NORMAL_HOURS,
     status: 'draft',
   };
@@ -40,37 +40,19 @@ const createNewTimesheet = (employeeId: string): Omit<TimesheetData, 'id' | 'cre
  * Safely converts any error object/value into a human-readable string.
  * This function is designed to prevent "[object Object]" errors by carefully inspecting
  * the error structure before attempting to stringify it.
- * @param error The error object caught.
- * @returns A string representation of the error.
  */
 const getErrorMessage = (error: unknown): string => {
-  // Case 1: The error is already a string.
-  if (typeof error === 'string') {
-    return error;
-  }
-
-  // Case 2: The error is an instance of the Error class.
-  if (error instanceof Error) {
-    return error.message;
-  }
-
-  // Case 3: The error is an object, likely from an API response (e.g., Supabase).
-  // Check for a 'message' property that is a string. This prevents converting an object-based message into "[object Object]".
+  if (typeof error === 'string') return error;
+  if (error instanceof Error) return error.message;
   if (error && typeof error === 'object' && 'message' in error && typeof (error as { message: unknown }).message === 'string') {
     return (error as { message: string }).message;
   }
-
-  // Case 4: Fallback for any other type of error.
-  // We attempt to serialize it to JSON, which is more informative than "[object Object]".
   try {
-    // A replacer is used to handle potential circular references in complex objects.
     const getCircularReplacer = () => {
       const seen = new WeakSet();
       return (key: string, value: any) => {
         if (typeof value === "object" && value !== null) {
-          if (seen.has(value)) {
-            return "[Circular Reference]"; // Avoid infinite loops
-          }
+          if (seen.has(value)) return "[Circular Reference]";
           seen.add(value);
         }
         return value;
@@ -78,7 +60,6 @@ const getErrorMessage = (error: unknown): string => {
     };
     return JSON.stringify(error, getCircularReplacer(), 2);
   } catch {
-    // This will only trigger if JSON.stringify itself fails (e.g., BigInt).
     return 'Une erreur inattendue et non-sérialisable est survenue.';
   }
 };
@@ -129,15 +110,33 @@ const App: React.FC = () => {
     if (!employeeId) return;
     const newTsData = createNewTimesheet(employeeId);
     const { data, error } = await supabase.from('timesheets').insert([newTsData]).select().single();
-    if (error || !data) {
+    
+    if (error) {
         console.error("Failed to create new week:", error);
+        
+        // Robust check for missing column error
+        const errorStr = JSON.stringify(error);
+        if (
+            error.code === '42703' || 
+            (error.message && error.message.includes('todo_list')) ||
+            (error.details && error.details.includes('todo_list')) ||
+            errorStr.includes('todo_list')
+        ) {
+            setSchemaError({ code: 'MISSING_TODO_LIST', message: 'Column todo_list missing' });
+        } else {
+            const errMsg = getErrorMessage(error);
+            alert(`Erreur lors de la création de la semaine: ${errMsg}`);
+        }
         return;
     }
-    setAllTimesheets(prev => [...prev, data]);
-    if (setCurrent) {
-        setCurrentTimesheetId(data.id);
+
+    if (data) {
+        setAllTimesheets(prev => [...prev, data]);
+        if (setCurrent) {
+            setCurrentTimesheetId(data.id);
+        }
+        return data;
     }
-    return data;
   }, []);
   
   const fetchPendingTasks = useCallback(async () => {
@@ -230,7 +229,6 @@ const App: React.FC = () => {
                 }
             } catch (error: any) {
                 console.error("Failed to refresh pending tasks:", error);
-                alert(`Erreur lors de l'actualisation des tâches en attente: ${error.message || 'Voir la console pour les détails.'}`);
             }
             
             setCurrentEmployeeId(profile.id);
@@ -267,6 +265,8 @@ const App: React.FC = () => {
                 setSchemaError({ code: 'SCHEMA_CACHE_ERROR', message: errorMessage });
             } else if (errorMessage.includes('column "status"')) {
                 setSchemaError({ ...error, code: 'STATUS_COLUMN_MISSING' });
+            } else if (errorMessage.includes('todo_list')) {
+                setSchemaError({ code: 'MISSING_TODO_LIST', message: errorMessage });
             } else {
                 setSchemaError(error);
             }
@@ -291,21 +291,40 @@ const App: React.FC = () => {
 
     const updatedTimesheet = updater(originalTimesheet);
     setAllTimesheets(prev => prev.map(ts => ts.id === currentTimesheetId ? updatedTimesheet : ts));
+    
+    const payload: any = { 
+        tasks: updatedTimesheet.tasks, 
+        period_number: updatedTimesheet.period_number,
+        start_date: updatedTimesheet.start_date,
+        end_date: updatedTimesheet.end_date,
+        status: updatedTimesheet.status,
+        updated_at: new Date().toISOString()
+    };
+    
+    if (updatedTimesheet.todo_list) {
+        payload.todo_list = updatedTimesheet.todo_list;
+    }
+
     const { error } = await supabase
         .from('timesheets')
-        .update({ 
-            tasks: updatedTimesheet.tasks, 
-            period_number: updatedTimesheet.period_number,
-            start_date: updatedTimesheet.start_date,
-            end_date: updatedTimesheet.end_date,
-            status: updatedTimesheet.status,
-            updated_at: new Date().toISOString()
-        })
+        .update(payload)
         .eq('id', currentTimesheetId);
+        
     if (error) {
         console.error("Failed to update timesheet:", error);
         setAllTimesheets(prev => prev.map(ts => ts.id === currentTimesheetId ? originalTimesheet : ts));
-        alert(`Erreur lors de la sauvegarde: ${error.message}. Veuillez réessayer.`);
+        
+        const errorStr = JSON.stringify(error);
+        if (
+            error.code === '42703' || 
+            (error.message && error.message.includes('todo_list')) ||
+            errorStr.includes('todo_list')
+        ) {
+             setSchemaError({ code: 'MISSING_TODO_LIST', message: 'Column todo_list missing' });
+        } else {
+             const errMsg = getErrorMessage(error);
+             alert(`Erreur lors de la sauvegarde: ${errMsg}. Veuillez réessayer.`);
+        }
     }
   }, [currentTimesheetId, allTimesheets]);
   
@@ -315,7 +334,6 @@ const App: React.FC = () => {
     const originalTimesheet = allTimesheets.find(ts => ts.id === currentTimesheetId);
     if (!originalTimesheet) return;
 
-    // Optimistic UI update
     const updatedTimesheet = { ...originalTimesheet, status: newStatus, updated_at: new Date().toISOString() };
     setAllTimesheets(prev => prev.map(ts => ts.id === currentTimesheetId ? updatedTimesheet : ts));
 
@@ -325,17 +343,14 @@ const App: React.FC = () => {
           .update({ status: newStatus, updated_at: new Date().toISOString() })
           .eq('id', currentTimesheetId);
         
-        if (error) throw error; // Centralize error handling in catch block
+        if (error) throw error; 
 
     } catch (error: unknown) {
-        // Get a clean error message first to use in console and alert
         const errorMessage = getErrorMessage(error);
         console.error("Failed to update timesheet status:", errorMessage);
 
-        // Revert optimistic update on failure
         setAllTimesheets(prev => prev.map(ts => ts.id === currentTimesheetId ? originalTimesheet : ts));
         
-        // --- Specific Error Detection ---
         if (errorMessage.includes('schema cache')) {
             setSchemaError({ code: 'SCHEMA_CACHE_ERROR', message: errorMessage });
             return;
@@ -349,9 +364,7 @@ const App: React.FC = () => {
             return;
         }
         
-        // Provide a clear, detailed error message to the user
-        const detailedAlert = `Erreur lors du changement de statut :\n\n${errorMessage}\n\nVeuillez réessayer.`;
-        alert(detailedAlert);
+        alert(`Erreur lors du changement de statut :\n\n${errorMessage}\n\nVeuillez réessayer.`);
     }
 }, [currentTimesheetId, allTimesheets]);
 
@@ -366,6 +379,10 @@ const App: React.FC = () => {
   
   const handleHeaderChange = (field: keyof TimesheetData, value: string) => {
     updateCurrentTimesheet(ts => ({ ...ts, [field]: value }));
+  };
+
+  const handleUpdateTodoList = (newTodoList: TodoItem[]) => {
+    updateCurrentTimesheet(ts => ({ ...ts, todo_list: newTodoList }));
   };
 
   const handleSaveNewTask = async (taskName: string) => {
@@ -436,7 +453,7 @@ const App: React.FC = () => {
     const { error } = await supabase.from('chargeable_tasks').update({ status: 'approved' }).eq('id', task.id);
     if (error) {
       console.error("Error approving task:", error);
-      alert(`Erreur lors de l'approbation: ${error.message}`);
+      alert(`Erreur lors'approbation: ${error.message}`);
       setPendingTasks(prev => [...prev, task]);
     } else {
       setAvailableChargeableTasks(prev => [...prev, task.name].sort());
@@ -506,6 +523,13 @@ const App: React.FC = () => {
               onTaskSelectionChange={handleTaskSelectionChange}
               onExport={handleExportTimesheet}
               isReadOnly={isReadOnly}
+            />;
+        case 'todo_list':
+            return <TodoListPage 
+                todoList={currentTimesheet?.todo_list || []}
+                onUpdateTodoList={handleUpdateTodoList}
+                isReadOnly={isReadOnly}
+                timesheetStatus={currentTimesheet?.status || 'draft'}
             />;
         case 'detailed_analysis':
             return currentUserProfile.role === 'admin' ? 

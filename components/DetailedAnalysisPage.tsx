@@ -1,3 +1,4 @@
+
 import React, { useState, useMemo } from 'react';
 import { TimesheetData, Profile, TaskCategory } from '../types';
 import DownloadIcon from './icons/DownloadIcon';
@@ -199,7 +200,6 @@ const DetailedAnalysisPage: React.FC<DetailedAnalysisPageProps> = ({
                     </div>
                     <div>
                         <label htmlFor="groupBy" className="block text-sm font-medium text-gray-700">Regrouper par</label>
-                        {/* Fix: Explicitly type event and use a proper type assertion instead of 'as any' for better type safety. */}
                         <select id="groupBy" value={groupBy} onChange={(e: React.ChangeEvent<HTMLSelectElement>) => setGroupBy(e.target.value as 'task' | 'employee' | 'day')} className="mt-1 block w-full px-2 py-1.5 border border-gray-300 rounded-md shadow-sm focus:outline-none focus:ring-cyan-500 focus:border-cyan-500">
                             <option value="task">Tâche</option>
                             <option value="employee">Collaborateur</option>
@@ -210,15 +210,13 @@ const DetailedAnalysisPage: React.FC<DetailedAnalysisPageProps> = ({
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
                     <div>
                         <label htmlFor="employees" className="block text-sm font-medium text-gray-700">Collaborateurs (laisser vide pour tous)</label>
-                        {/* Fix: Explicitly type the event object 'e' to resolve the TypeScript error. */}
-                        <select id="employees" multiple value={selectedEmployees} onChange={(e: React.ChangeEvent<HTMLSelectElement>) => setSelectedEmployees(Array.from(e.target.selectedOptions, option => option.value))} className="mt-1 block w-full h-32 px-2 py-1.5 border border-gray-300 rounded-md shadow-sm focus:outline-none focus:ring-cyan-500 focus:border-cyan-500">
+                        <select id="employees" multiple value={selectedEmployees} onChange={(e: React.ChangeEvent<HTMLSelectElement>) => setSelectedEmployees(Array.from(e.target.selectedOptions, (option: HTMLOptionElement) => option.value))} className="mt-1 block w-full h-32 px-2 py-1.5 border border-gray-300 rounded-md shadow-sm focus:outline-none focus:ring-cyan-500 focus:border-cyan-500">
                             {employees.filter(e => e.role !== 'admin').map(emp => <option key={emp.id} value={emp.id}>{emp.name}</option>)}
                         </select>
                     </div>
                     <div>
                         <label htmlFor="tasks" className="block text-sm font-medium text-gray-700">Tâches chargeables (laisser vide pour toutes)</label>
-                        {/* Fix: Explicitly type the event object 'e' to resolve the TypeScript error. */}
-                        <select id="tasks" multiple value={selectedTasks} onChange={(e: React.ChangeEvent<HTMLSelectElement>) => setSelectedTasks(Array.from(e.target.selectedOptions, option => option.value))} className="mt-1 block w-full h-32 px-2 py-1.5 border border-gray-300 rounded-md shadow-sm focus:outline-none focus:ring-cyan-500 focus:border-cyan-500">
+                        <select id="tasks" multiple value={selectedTasks} onChange={(e: React.ChangeEvent<HTMLSelectElement>) => setSelectedTasks(Array.from(e.target.selectedOptions, (option: HTMLOptionElement) => option.value))} className="mt-1 block w-full h-32 px-2 py-1.5 border border-gray-300 rounded-md shadow-sm focus:outline-none focus:ring-cyan-500 focus:border-cyan-500">
                             {availableChargeableTasks.map(task => <option key={task} value={task}>{task}</option>)}
                         </select>
                     </div>

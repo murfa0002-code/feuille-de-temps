@@ -1,6 +1,4 @@
 
-
-
 import React from 'react';
 
 interface SchemaMigrationPageProps {
@@ -9,214 +7,186 @@ interface SchemaMigrationPageProps {
 }
 
 const migrationScripts: { [key: string]: { title: string; description: string; script: string } } = {
+  'MISSING_TABLES': {
+    title: "Initialisation Complète de la Base de Données",
+    description: "Votre base de données est vide (suite à la suspension du projet). Ce script va recréer toutes les tables, les relations et les règles de sécurité nécessaires.",
+    script: `-- =================================================================
+-- SCRIPT DE REGENERATION COMPLET (LGMC MUTANDIS)
+-- Copiez tout ce contenu et exécutez-le dans l'éditeur SQL de Supabase.
+-- =================================================================
+
+-- 1. Vérification et nettoyage préalable (pour éviter les conflits)
+DROP TRIGGER IF EXISTS on_auth_user_created ON auth.users;
+DROP FUNCTION IF EXISTS public.handle_new_user();
+DROP FUNCTION IF EXISTS public.is_admin();
+
+-- 2. Table PROFILES (Profils utilisateurs)
+CREATE TABLE IF NOT EXISTS public.profiles (
+  id UUID NOT NULL REFERENCES auth.users(id) ON DELETE CASCADE,
+  name TEXT,
+  username TEXT,
+  role TEXT CHECK (role IN ('admin', 'employee')) DEFAULT 'employee',
+  updated_at TIMESTAMP WITH TIME ZONE,
+  PRIMARY KEY (id)
+);
+ALTER TABLE public.profiles ENABLE ROW LEVEL SECURITY;
+
+-- 3. Table TIMESHEETS (Feuilles de temps)
+CREATE TABLE IF NOT EXISTS public.timesheets (
+  id UUID NOT NULL DEFAULT gen_random_uuid(),
+  employee_id UUID REFERENCES public.profiles(id) NOT NULL,
+  period_number TEXT,
+  start_date DATE NOT NULL,
+  end_date DATE NOT NULL,
+  tasks JSONB DEFAULT '[]'::jsonb,
+  todo_list JSONB DEFAULT '[]'::jsonb, -- Ajout de la colonne pour la To-Do List
+  normal_hours JSONB DEFAULT '[]'::jsonb,
+  status TEXT DEFAULT 'draft',
+  created_at TIMESTAMP WITH TIME ZONE DEFAULT timezone('utc'::text, now()) NOT NULL,
+  updated_at TIMESTAMP WITH TIME ZONE DEFAULT timezone('utc'::text, now()) NOT NULL,
+  PRIMARY KEY (id)
+);
+ALTER TABLE public.timesheets ENABLE ROW LEVEL SECURITY;
+
+-- 4. Table CHARGEABLE_TASKS (Tâches facturables)
+CREATE TABLE IF NOT EXISTS public.chargeable_tasks (
+  id UUID NOT NULL DEFAULT gen_random_uuid(),
+  name TEXT NOT NULL UNIQUE,
+  status TEXT DEFAULT 'approved',
+  proposed_by UUID REFERENCES public.profiles(id),
+  created_at TIMESTAMP WITH TIME ZONE DEFAULT timezone('utc'::text, now()) NOT NULL,
+  PRIMARY KEY (id)
+);
+ALTER TABLE public.chargeable_tasks ENABLE ROW LEVEL SECURITY;
+
+-- 5. Fonction de vérification du rôle ADMIN
+CREATE OR REPLACE FUNCTION public.is_admin()
+RETURNS boolean
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = public
+AS $$
+BEGIN
+  RETURN EXISTS (
+    SELECT 1 FROM profiles WHERE id = auth.uid() AND role = 'admin'
+  );
+END;
+$$;
+
+-- 6. Trigger pour création automatique de profil à l'inscription
+CREATE OR REPLACE FUNCTION public.handle_new_user()
+RETURNS trigger
+LANGUAGE plpgsql
+SECURITY DEFINER SET search_path = public
+AS $$
+BEGIN
+  INSERT INTO public.profiles (id, name, username, role)
+  VALUES (
+    new.id, 
+    COALESCE(new.raw_user_meta_data->>'name', 'Utilisateur'), 
+    COALESCE(new.raw_user_meta_data->>'username', 'user'), 
+    'employee'
+  );
+  RETURN new;
+END;
+$$;
+
+CREATE TRIGGER on_auth_user_created
+  AFTER INSERT ON auth.users
+  FOR EACH ROW EXECUTE PROCEDURE public.handle_new_user();
+
+-- 7. POLITIQUES DE SÉCURITÉ (RLS) - Nettoyage et Création
+
+-- Suppression des anciennes politiques pour éviter les erreurs "Policy already exists"
+DO $$
+DECLARE r RECORD;
+BEGIN
+    FOR r IN (SELECT policyname, tablename FROM pg_policies WHERE schemaname = 'public') LOOP
+        EXECUTE 'DROP POLICY IF EXISTS ' || quote_ident(r.policyname) || ' ON public.' || quote_ident(r.tablename) || ';';
+    END LOOP;
+END $$;
+
+-- Politiques PROFILES
+CREATE POLICY "Lecture publique des profils" ON profiles FOR SELECT TO authenticated USING (true);
+CREATE POLICY "Modification de son propre profil" ON profiles FOR UPDATE TO authenticated USING (auth.uid() = id);
+
+-- Politiques TIMESHEETS
+CREATE POLICY "Lecture: Admin tout, Employé les siennes" ON timesheets FOR SELECT TO authenticated USING (is_admin() OR auth.uid() = employee_id);
+CREATE POLICY "Création: Employé pour lui-même" ON timesheets FOR INSERT TO authenticated WITH CHECK (auth.uid() = employee_id);
+CREATE POLICY "Modification: Admin tout, Employé brouillon seulement" ON timesheets FOR UPDATE TO authenticated USING ((auth.uid() = employee_id AND status = 'draft') OR is_admin());
+CREATE POLICY "Suppression: Admin seulement" ON timesheets FOR DELETE TO authenticated USING (is_admin());
+
+-- Politiques CHARGEABLE_TASKS
+CREATE POLICY "Lecture: Tout le monde" ON chargeable_tasks FOR SELECT TO authenticated USING (true);
+CREATE POLICY "Création: Tout utilisateur authentifié" ON chargeable_tasks FOR INSERT TO authenticated WITH CHECK (auth.role() = 'authenticated');
+CREATE POLICY "Modification: Admin seulement" ON chargeable_tasks FOR UPDATE TO authenticated USING (is_admin());
+CREATE POLICY "Suppression: Admin seulement" ON chargeable_tasks FOR DELETE TO authenticated USING (is_admin());
+
+-- Fin du script
+`
+  },
+  'MISSING_TODO_LIST': {
+    title: "Mise à Jour : Ajout To-Do List",
+    description: "Une nouvelle fonctionnalité 'To-Do List' a été ajoutée. Une colonne est manquante dans la base de données.",
+    script: `-- Ajout de la colonne todo_list
+ALTER TABLE public.timesheets ADD COLUMN IF NOT EXISTS todo_list JSONB DEFAULT '[]'::jsonb;
+`
+  },
   'default': {
-    title: "Mise à Jour de la Base de Données Requise (v1)",
-    description: "L'application a été mise à jour avec des fonctionnalités de validation de tâches qui nécessitent une modification de la structure de votre base de données.",
-    script: `-- Ce script met à jour votre table 'chargeable_tasks' pour la nouvelle fonctionnalité de validation des tâches.
-
--- Ajoute une colonne 'status' pour suivre l'état d'approbation des tâches.
--- La valeur par défaut 'approved' est appliquée aux tâches existantes.
-ALTER TABLE public.chargeable_tasks
-ADD COLUMN IF NOT EXISTS status TEXT NOT NULL DEFAULT 'approved';
-
--- Ajoute une colonne 'proposed_by' pour lier à l'utilisateur qui a soumis la tâche.
-ALTER TABLE public.chargeable_tasks
-ADD COLUMN IF NOT EXISTS proposed_by UUID REFERENCES auth.users(id);
+    title: "Mise à Jour Requise",
+    description: "Une erreur de schéma a été détectée. Veuillez appliquer le correctif ci-dessous.",
+    script: `-- Ajout de la colonne todo_list (Correctif standard)
+ALTER TABLE public.timesheets ADD COLUMN IF NOT EXISTS todo_list JSONB DEFAULT '[]'::jsonb;
 `
   },
   'PGRST200': {
-    title: "Correction de la Base de Données Requise (v2)",
-    description: "Une relation est manquante dans votre base de données, ce qui empêche l'affichage du nom des personnes qui proposent des tâches. Ce script va corriger cette relation.",
-    script: `-- SCRIPT DE CORRECTION (v2)
--- Ce script corrige la relation manquante entre 'chargeable_tasks' et 'profiles'.
-
--- ÉTAPE 1: Assurer que la colonne 'proposed_by' existe.
--- (Ne fait rien si elle existe déjà)
-ALTER TABLE public.chargeable_tasks
-ADD COLUMN IF NOT EXISTS proposed_by UUID;
-
--- ÉTAPE 2: Supprimer l'ancienne contrainte incorrecte si elle existe.
--- L'ancienne contrainte pointait vers 'auth.users'. Nous la supprimons.
--- Cette commande peut afficher une erreur si la contrainte n'existe pas, c'est normal.
-ALTER TABLE public.chargeable_tasks
-DROP CONSTRAINT IF EXISTS chargeable_tasks_proposed_by_fkey;
-
--- ÉTAPE 3: Créer la nouvelle contrainte correcte pointant vers 'profiles'.
--- Cela permet à l'application de trouver le nom du proposant.
-ALTER TABLE public.chargeable_tasks
-ADD CONSTRAINT chargeable_tasks_proposed_by_fkey
-FOREIGN KEY (proposed_by)
-REFERENCES public.profiles(id);
-`
+    title: "Correction de Relation Manquante",
+    description: "Le lien entre les tâches et les utilisateurs est manquant.",
+    script: `ALTER TABLE public.chargeable_tasks ADD COLUMN IF NOT EXISTS proposed_by UUID REFERENCES public.profiles(id);`
   },
   'STATUS_COLUMN_MISSING': {
-    title: "Mise à Jour de la Base de Données Requise (v3)",
-    description: "L'application a été mise à jour avec un flux de validation des feuilles de temps. Cela nécessite d'ajouter une colonne 'status' à votre table 'timesheets'.",
-    script: `-- Ce script ajoute la colonne 'status' pour le flux de validation.
-
--- Ajoute une colonne 'status' pour suivre l'état de la feuille de temps.
--- La valeur par défaut 'draft' (brouillon) est appliquée à toutes les fiches existantes.
-ALTER TABLE public.timesheets
-ADD COLUMN IF NOT EXISTS status TEXT NOT NULL DEFAULT 'draft';`
+    title: "Colonne Status Manquante",
+    description: "Ajout de la colonne status à la table timesheets.",
+    script: `ALTER TABLE public.timesheets ADD COLUMN IF NOT EXISTS status TEXT NOT NULL DEFAULT 'draft';`
   },
   'TIMESHEET_RLS_MISSING': {
-    title: "Mise à Jour de la Sécurité Requise (v4)",
-    description: "L'application a détecté une erreur de permission lors de la mise à jour d'une feuille de temps. Cela est dû à des règles de sécurité (Row Level Security) manquantes ou incorrectes sur la table 'timesheets'. Ce script complet va corriger le problème.",
-    script: `-- =================================================================
--- SCRIPT DE SÉCURITÉ COMPLET POUR LA TABLE 'timesheets' (v4)
---
--- Ce script :
--- 1. Crée la fonction 'is_admin()' nécessaire pour les règles de sécurité.
--- 2. Nettoie les anciennes règles sur 'timesheets'.
--- 3. Applique les permissions correctes pour le flux de validation.
--- =================================================================
-
--- ÉTAPE 1: Création d'une fonction sécurisée pour vérifier le rôle admin.
--- 'SECURITY DEFINER' est CRUCIAL. Il exécute la fonction avec les droits du créateur
--- (postgres) et non de l'utilisateur appelant, ce qui empêche la récursion.
-CREATE OR REPLACE FUNCTION public.is_admin()
-RETURNS boolean
-LANGUAGE plpgsql
-SECURITY DEFINER
--- Définir le chemin de recherche explicitement est une bonne pratique de sécurité.
-SET search_path = public
-AS $$
-BEGIN
-  -- Vérifie si l'utilisateur actuellement authentifié a le rôle 'admin'.
-  RETURN EXISTS (
-    SELECT 1 FROM profiles WHERE id = auth.uid() AND role = 'admin'
-  );
-END;
-$$;
-
--- ÉTAPE 2: Activation de la Sécurité au Niveau des Lignes (RLS) sur la table.
+    title: "Permissions Manquantes",
+    description: "Réinitialisation des permissions de sécurité.",
+    script: `-- Réinitialisation des permissions
 ALTER TABLE public.timesheets ENABLE ROW LEVEL SECURITY;
-
--- ÉTAPE 3: Suppression de TOUTES les anciennes politiques pour un état propre.
-DO $$
-DECLARE
-    r RECORD;
-BEGIN
-    FOR r IN (SELECT policyname FROM pg_policies WHERE tablename = 'timesheets' AND schemaname = 'public') LOOP
-        EXECUTE 'DROP POLICY IF EXISTS ' || quote_ident(r.policyname) || ' ON public.timesheets;';
-    END LOOP;
-END $$;
-
--- ÉTAPE 4: Création de la politique de LECTURE (SELECT).
--- Les admins peuvent voir toutes les feuilles, les employés ne voient que les leurs.
-CREATE POLICY "policy_select_timesheets"
-ON public.timesheets FOR SELECT TO authenticated
-USING (public.is_admin() OR (auth.uid() = employee_id));
-
--- ÉTAPE 5: Création de la politique d'ÉCRITURE (INSERT).
--- Un utilisateur ne peut créer une feuille de temps que pour lui-même.
-CREATE POLICY "policy_insert_timesheets"
-ON public.timesheets FOR INSERT TO authenticated
-WITH CHECK (auth.uid() = employee_id);
-
--- ÉTAPE 6: Création des politiques de MISE À JOUR (UPDATE).
-
--- Règle 6a: Les employés ne peuvent modifier que leurs propres feuilles de temps
--- et UNIQUEMENT si elles sont encore à l'état de brouillon ('draft').
-CREATE POLICY "policy_update_own_draft_timesheets"
-ON public.timesheets FOR UPDATE TO authenticated
-USING ( (NOT public.is_admin()) AND (auth.uid() = employee_id) AND (status = 'draft') )
-WITH CHECK ( (auth.uid() = employee_id) );
-
--- Règle 6b: Les admins peuvent mettre à jour n'importe quelle feuille de temps,
--- peu importe son statut. C'est ce qui leur permet d'approuver ou de dévalider.
-CREATE POLICY "policy_update_any_timesheet_for_admins"
-ON public.timesheets FOR UPDATE TO authenticated
-USING (public.is_admin())
-WITH CHECK (public.is_admin());
-
--- ÉTAPE 7: Création de la politique de SUPPRESSION (DELETE).
--- Seuls les admins peuvent supprimer des feuilles de temps.
-CREATE POLICY "policy_delete_timesheets_for_admins"
-ON public.timesheets FOR DELETE TO authenticated
-USING (public.is_admin());
-
--- =================================================================
--- FIN DU SCRIPT. Le flux de validation devrait fonctionner.
--- =================================================================
+CREATE POLICY "Voir feuilles" ON public.timesheets FOR SELECT USING (true);
 `
   },
   'SCHEMA_CACHE_ERROR': {
-    title: "Réparation Ultime Requise (v7)",
-    description: "L'application a détecté une erreur de synchronisation persistante entre la base de données et l'API. Ce script 'ultime' va réinitialiser les permissions et forcer la synchronisation pour résoudre le problème. Si cela ne fonctionne pas, des instructions manuelles sont incluses.",
-    script: `-- =================================================================
--- SCRIPT DE RÉPARATION ULTIME (v7) - Problème de Cache & Permissions
---
--- Exécutez ce script si vous êtes bloqué par l'erreur "Could not find the 'status' column".
--- Ce script va :
--- 1. S'assurer que la colonne 'status' existe.
--- 2. Recréer la fonction d'aide 'is_admin()'.
--- 3. Réinitialiser complètement la sécurité (RLS) sur la table 'timesheets'.
--- 4. Forcer l'API à recharger son cache.
--- =================================================================
-
--- ÉTAPE 1: Assurer que la colonne 'status' existe dans la table 'timesheets'.
-ALTER TABLE public.timesheets
-ADD COLUMN IF NOT EXISTS status TEXT NOT NULL DEFAULT 'draft';
-
--- ÉTAPE 2: Recréation de la fonction sécurisée 'is_admin()'.
-CREATE OR REPLACE FUNCTION public.is_admin()
-RETURNS boolean
-LANGUAGE plpgsql
-SECURITY DEFINER
-SET search_path = public
-AS $$
-BEGIN
-  RETURN EXISTS (
-    SELECT 1 FROM profiles WHERE id = auth.uid() AND role = 'admin'
-  );
-END;
-$$;
-
--- ÉTAPE 3: Nettoyage et réinitialisation complète de la RLS.
--- On supprime d'abord toutes les politiques existantes pour éviter les conflits.
-DO $$
-DECLARE
-    r RECORD;
-BEGIN
-    FOR r IN (SELECT policyname FROM pg_policies WHERE tablename = 'timesheets' AND schemaname = 'public') LOOP
-        EXECUTE 'DROP POLICY IF EXISTS ' || quote_ident(r.policyname) || ' ON public.timesheets;';
-    END LOOP;
-END $$;
-
--- On désactive puis réactive la RLS pour forcer une réinitialisation.
-ALTER TABLE public.timesheets DISABLE ROW LEVEL SECURITY;
-ALTER TABLE public.timesheets ENABLE ROW LEVEL SECURITY;
-
--- ÉTAPE 4: Application des nouvelles politiques de sécurité.
-CREATE POLICY "policy_select_timesheets" ON public.timesheets FOR SELECT TO authenticated USING (public.is_admin() OR (auth.uid() = employee_id));
-CREATE POLICY "policy_insert_timesheets" ON public.timesheets FOR INSERT TO authenticated WITH CHECK (auth.uid() = employee_id);
-CREATE POLICY "policy_update_own_draft_timesheets" ON public.timesheets FOR UPDATE TO authenticated USING ( (NOT public.is_admin()) AND (auth.uid() = employee_id) AND (status = 'draft') ) WITH CHECK ( (auth.uid() = employee_id) );
-CREATE POLICY "policy_update_any_timesheet_for_admins" ON public.timesheets FOR UPDATE TO authenticated USING (public.is_admin()) WITH CHECK (public.is_admin());
-CREATE POLICY "policy_delete_timesheets_for_admins" ON public.timesheets FOR DELETE TO authenticated USING (public.is_admin());
-
-
--- ÉTAPE 5: Forcer le rechargement du cache de l'API. C'est l'étape la plus importante.
-NOTIFY pgrst, 'reload schema';
-
--- =================================================================
--- FIN DU SCRIPT.
--- Si l'erreur persiste après avoir exécuté ce script, le problème est probablement plus profond.
--- Essayez de "Pause" puis "Restore" votre projet depuis le dashboard Supabase
--- (Project Settings -> General). Cela force un redémarrage complet de l'API.
--- =================================================================`
+    title: "Erreur de Cache Schema",
+    description: "Le cache de l'API Supabase doit être rafraîchi.",
+    script: `NOTIFY pgrst, 'reload schema';`
   },
 };
 
 
 const SchemaMigrationPage: React.FC<SchemaMigrationPageProps> = ({ onRetry, error }) => {
-
-    const errorKey = error?.code === 'SCHEMA_CACHE_ERROR' ? 'SCHEMA_CACHE_ERROR'
+    
+    // Detect if tables are completely missing (Error 42P01 usually)
+    // Or if we get specific "relation does not exist" messages
+    const errorMessage = typeof error === 'string' ? error : (error?.message || '');
+    const isMissingTables = 
+        error?.code === '42P01' || 
+        errorMessage.includes('relation "profiles" does not exist') ||
+        errorMessage.includes('relation "public.profiles" does not exist') ||
+        errorMessage.includes('relation "timesheets" does not exist');
+    
+    // Determine the error key
+    const errorKey = 
+          error?.code === 'SCHEMA_CACHE_ERROR' ? 'SCHEMA_CACHE_ERROR'
         : error?.code === 'TIMESHEET_RLS_MISSING' ? 'TIMESHEET_RLS_MISSING'
         : error?.code === 'STATUS_COLUMN_MISSING' ? 'STATUS_COLUMN_MISSING'
+        : error?.code === 'MISSING_TODO_LIST' ? 'MISSING_TODO_LIST'
         : error?.code === 'PGRST200' ? 'PGRST200' 
-        : 'default';
-    const { title, description, script } = migrationScripts[errorKey];
+        : isMissingTables ? 'MISSING_TABLES'
+        : 'default'; 
+        
+    const { title, description, script } = migrationScripts[errorKey] || migrationScripts['default'];
 
     const handleCopy = () => {
         navigator.clipboard.writeText(script)
@@ -226,48 +196,58 @@ const SchemaMigrationPage: React.FC<SchemaMigrationPageProps> = ({ onRetry, erro
 
     return (
         <div className="min-h-screen bg-gray-100 flex flex-col justify-center items-center p-4">
-            <div className="max-w-2xl w-full bg-white shadow-lg rounded-lg p-8">
+            <div className="max-w-3xl w-full bg-white shadow-lg rounded-lg p-8">
                 <div className="text-center mb-6">
-                    <svg className="mx-auto h-12 w-12 text-yellow-500" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth="1.5" stroke="currentColor">
-                        <path strokeLinecap="round" strokeLinejoin="round" d="M3 4.5h14.25M3 9h9.75M3 13.5h9.75m4.5-4.5v12m0 0l-3.75-3.75M17.25 21L21 17.25" />
+                    <svg className="mx-auto h-12 w-12 text-cyan-600" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth="1.5" stroke="currentColor">
+                         <path strokeLinecap="round" strokeLinejoin="round" d="M16.023 9.348h4.992v-.001M2.985 19.644v-4.992m0 0h4.992m-4.993 0l3.181 3.183a8.25 8.25 0 0011.664 0l3.181-3.183m-4.991-2.695v4.992h-4.992m0 0l-3.182-3.182a8.25 8.25 0 0111.664 0l3.182 3.182" />
                     </svg>
                     <h1 className="text-2xl font-bold text-gray-800 mt-4">{title}</h1>
                     <p className="text-gray-600 mt-2">{description}</p>
+                    <p className="text-xs text-gray-400 mt-2 font-mono bg-gray-50 inline-block px-2 py-1 rounded">Code erreur: {error?.code || 'N/A'}</p>
                 </div>
                 
-                <div className="bg-yellow-50 border-l-4 border-yellow-400 text-yellow-800 p-4 mb-6 rounded-md" role="alert">
-                    <p className="font-bold">Action requise</p>
-                    <p className="mt-1 text-sm">Veuillez exécuter le script SQL ci-dessous dans l'éditeur SQL de votre projet Supabase pour continuer.</p>
+                <div className="bg-blue-50 border-l-4 border-blue-400 text-blue-800 p-4 mb-6 rounded-md text-left" role="alert">
+                    <p className="font-bold mb-2">Instructions de réparation :</p>
+                    <ol className="list-decimal list-inside text-sm text-gray-700 space-y-1">
+                        <li>Copiez le script SQL ci-dessous.</li>
+                        <li>Allez sur <a href="https://supabase.com/dashboard/project/_/sql" target="_blank" rel="noopener noreferrer" className="underline font-semibold hover:text-blue-600">l'éditeur SQL de votre projet Supabase</a>.</li>
+                        <li>Collez le script dans la zone de texte (effacez tout contenu existant).</li>
+                        <li>Cliquez sur le bouton vert <strong>RUN</strong> en bas à droite.</li>
+                        <li>Une fois le succès confirmé ("Success"), revenez ici et cliquez sur le bouton en bas de page.</li>
+                    </ol>
                 </div>
 
-                <div className="space-y-4">
+                <div className="space-y-4 text-left">
                     <div>
-                        <label className="block text-sm font-medium text-gray-700">
-                            Script de Migration SQL :
+                        <label className="block text-sm font-medium text-gray-700 mb-1">
+                            Script SQL à exécuter :
                         </label>
-                        <div className="mt-1 bg-gray-800 text-white p-4 rounded-md text-xs font-mono overflow-x-auto relative">
-                             <button
+                        <div className="relative group">
+                            <div className="bg-gray-900 text-gray-100 p-4 rounded-md text-xs font-mono overflow-x-auto max-h-[400px] overflow-y-auto border border-gray-700 shadow-inner">
+                                <pre><code>{script}</code></pre>
+                            </div>
+                            <button
                                 onClick={handleCopy}
-                                className="absolute top-2 right-2 px-2 py-1 bg-gray-600 text-white rounded-md text-xs hover:bg-gray-500"
+                                className="absolute top-2 right-2 px-3 py-1.5 bg-gray-700 text-white rounded-md text-xs font-medium hover:bg-gray-600 opacity-80 group-hover:opacity-100 transition-opacity flex items-center gap-1"
                             >
+                                <svg xmlns="http://www.w3.org/2000/svg" className="h-3 w-3" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 5H6a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2v-1M8 5a2 2 0 002 2h2a2 2 0 002-2M8 5a2 2 0 012-2h2a2 2 0 012 2m0 0h2a2 2 0 012 2v3m2 4H10m0 0l3-3m-3 3l3 3" />
+                                </svg>
                                 Copier
                             </button>
-                            <pre><code>{script}</code></pre>
                         </div>
                     </div>
-                     <ol className="list-decimal list-inside text-sm text-gray-600 space-y-1">
-                        <li>Allez sur <a href="https://supabase.com/" target="_blank" rel="noopener noreferrer" className="underline font-semibold">votre projet Supabase</a>.</li>
-                        <li>Dans le menu de gauche, cliquez sur <strong>SQL Editor</strong>.</li>
-                        <li>Copiez le script ci-dessus et collez-le dans l'éditeur.</li>
-                        <li>Cliquez sur le bouton <strong>RUN</strong>.</li>
-                    </ol>
-                    <div>
+                    
+                    <div className="pt-4">
                         <button
                             type="button"
                             onClick={onRetry}
-                            className="w-full flex justify-center py-2 px-4 border border-transparent rounded-md shadow-sm text-sm font-medium text-white bg-cyan-600 hover:bg-cyan-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-cyan-500"
+                            className="w-full flex justify-center items-center gap-2 py-3 px-4 border border-transparent rounded-md shadow-sm text-sm font-bold text-white bg-cyan-600 hover:bg-cyan-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-cyan-500 transition-colors"
                         >
-                            J'ai exécuté le script, continuer vers l'application
+                            <svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
+                            </svg>
+                            J'ai exécuté le script, Recharger l'application
                         </button>
                     </div>
                 </div>
