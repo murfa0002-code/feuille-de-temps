@@ -1,5 +1,4 @@
 
-
 import React, { useState } from 'react';
 import { v4 as uuidv4 } from 'uuid';
 import { TodoItem, TimesheetData } from '../types';
@@ -10,10 +9,19 @@ interface TodoListPageProps {
     todoList: TodoItem[];
     onUpdateTodoList: (newTodoList: TodoItem[]) => void;
     isReadOnly: boolean;
-    timesheetStatus: TimesheetData['status'];
+    listStatus: 'draft' | 'submitted' | 'approved';
+    onStatusChange?: (newStatus: 'draft' | 'submitted' | 'approved') => void;
+    userRole?: 'admin' | 'employee';
 }
 
-const TodoListPage: React.FC<TodoListPageProps> = ({ todoList, onUpdateTodoList, isReadOnly, timesheetStatus }) => {
+const TodoListPage: React.FC<TodoListPageProps> = ({ 
+    todoList, 
+    onUpdateTodoList, 
+    isReadOnly, 
+    listStatus,
+    onStatusChange,
+    userRole 
+}) => {
     // State to hold input values for each day independently
     const [newTasksByDay, setNewTasksByDay] = useState<{ [key: number]: string }>({});
 
@@ -56,41 +64,100 @@ const TodoListPage: React.FC<TodoListPageProps> = ({ todoList, onUpdateTodoList,
     const completedTasks = todoList.filter(t => t.completed).length;
     const progress = totalTasks > 0 ? Math.round((completedTasks / totalTasks) * 100) : 0;
 
+    const getStatusBadge = () => {
+        switch (listStatus) {
+            case 'submitted':
+                return <span className="px-2 py-1 text-xs font-semibold text-yellow-800 bg-yellow-200 rounded-full">En attente</span>;
+            case 'approved':
+                return <span className="px-2 py-1 text-xs font-semibold text-green-800 bg-green-200 rounded-full">Validée</span>;
+            case 'draft':
+            default:
+                return <span className="px-2 py-1 text-xs font-semibold text-gray-800 bg-gray-200 rounded-full">Brouillon</span>;
+        }
+    };
+
+    const getActionButtons = () => {
+        if (!onStatusChange || !userRole) return null;
+
+        if (userRole === 'admin') {
+             if (listStatus === 'submitted') {
+                return (
+                    <button 
+                        onClick={() => onStatusChange('approved')} 
+                        className="px-3 py-1.5 text-sm font-semibold text-white bg-green-600 rounded-md hover:bg-green-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-green-500"
+                    >
+                        Approuver les objectifs
+                    </button>
+                );
+            }
+            if (listStatus === 'approved') {
+                return (
+                    <button 
+                        onClick={() => onStatusChange('draft')} 
+                        className="px-3 py-1.5 text-sm font-semibold text-gray-800 bg-yellow-400 rounded-md hover:bg-yellow-500 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-yellow-400"
+                    >
+                        Dévalider les objectifs
+                    </button>
+                );
+            }
+        } else { // Employee view
+             if (listStatus === 'draft') {
+                return (
+                    <button 
+                        onClick={() => onStatusChange('submitted')}
+                        className="px-3 py-1.5 text-sm font-semibold text-white bg-blue-600 rounded-md hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500"
+                    >
+                        Soumettre les objectifs
+                    </button>
+                );
+            }
+        }
+        return null;
+    }
+
     return (
         <section aria-labelledby="todo-title" className="max-w-7xl mx-auto">
             <div className="flex flex-col sm:flex-row justify-between items-center mb-6 gap-4">
                 <div>
-                    <h2 id="todo-title" className="text-2xl font-bold text-gray-800">
-                        Planning Hebdomadaire & Objectifs
-                    </h2>
+                     <div className="flex items-center gap-3">
+                        <h2 id="todo-title" className="text-2xl font-bold text-gray-800">
+                            Planning Hebdomadaire & Objectifs
+                        </h2>
+                        <span className="text-sm font-semibold text-gray-600">Statut (Objectifs) :</span>
+                        {getStatusBadge()}
+                    </div>
                     <p className="text-sm text-gray-500 mt-1">Détaillez vos tâches jour par jour.</p>
                 </div>
                 
-                <div className="flex items-center gap-4 bg-white p-3 rounded-lg shadow-sm border border-gray-200">
-                    <div className="text-right">
-                        <span className="block text-xs font-medium text-gray-500 uppercase tracking-wider">Avancement Global</span>
-                        <span className="block text-lg font-bold text-cyan-700">{completedTasks} / {totalTasks} tâches</span>
-                    </div>
-                    <div className="relative w-16 h-16">
-                        <svg className="w-full h-full" viewBox="0 0 36 36">
-                            <path
-                                className="text-gray-200"
-                                d="M18 2.0845 a 15.9155 15.9155 0 0 1 0 31.831 a 15.9155 15.9155 0 0 1 0 -31.831"
-                                fill="none"
-                                stroke="currentColor"
-                                strokeWidth="4"
-                            />
-                            <path
-                                className="text-cyan-600 transition-all duration-1000 ease-out"
-                                strokeDasharray={`${progress}, 100`}
-                                d="M18 2.0845 a 15.9155 15.9155 0 0 1 0 31.831 a 15.9155 15.9155 0 0 1 0 -31.831"
-                                fill="none"
-                                stroke="currentColor"
-                                strokeWidth="4"
-                            />
-                        </svg>
-                        <div className="absolute inset-0 flex items-center justify-center text-xs font-bold text-gray-700">
-                            {progress}%
+                <div className="flex flex-col sm:flex-row items-center gap-4">
+                    {getActionButtons()}
+
+                    <div className="flex items-center gap-4 bg-white p-3 rounded-lg shadow-sm border border-gray-200">
+                        <div className="text-right">
+                            <span className="block text-xs font-medium text-gray-500 uppercase tracking-wider">Avancement Global</span>
+                            <span className="block text-lg font-bold text-cyan-700">{completedTasks} / {totalTasks} tâches</span>
+                        </div>
+                        <div className="relative w-16 h-16">
+                            <svg className="w-full h-full" viewBox="0 0 36 36">
+                                <path
+                                    className="text-gray-200"
+                                    d="M18 2.0845 a 15.9155 15.9155 0 0 1 0 31.831 a 15.9155 15.9155 0 0 1 0 -31.831"
+                                    fill="none"
+                                    stroke="currentColor"
+                                    strokeWidth="4"
+                                />
+                                <path
+                                    className="text-cyan-600 transition-all duration-1000 ease-out"
+                                    strokeDasharray={`${progress}, 100`}
+                                    d="M18 2.0845 a 15.9155 15.9155 0 0 1 0 31.831 a 15.9155 15.9155 0 0 1 0 -31.831"
+                                    fill="none"
+                                    stroke="currentColor"
+                                    strokeWidth="4"
+                                />
+                            </svg>
+                            <div className="absolute inset-0 flex items-center justify-center text-xs font-bold text-gray-700">
+                                {progress}%
+                            </div>
                         </div>
                     </div>
                 </div>
@@ -116,8 +183,6 @@ const TodoListPage: React.FC<TodoListPageProps> = ({ todoList, onUpdateTodoList,
             <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
                 {DAYS_OF_WEEK.map((dayName, index) => {
                     // Filter tasks for this specific day
-                    // Fallback to dayIndex === index to handle new logic, 
-                    // or handle legacy items without dayIndex (put them in Monday/0 or ignore)
                     const dayTasks = todoList.filter(t => (t.dayIndex !== undefined ? t.dayIndex === index : index === 0));
                     
                     return (

@@ -31,6 +31,7 @@ const createNewTimesheet = (employeeId: string): Omit<TimesheetData, 'id' | 'cre
     end_date: endDate.toISOString().split('T')[0],
     tasks: [...INITIAL_NON_CHARGEABLE_TASKS.map(task => ({...task, id: uuidv4(), hours: Array(6).fill(0)}))],
     todo_list: [], // Initialize empty to-do list
+    todo_status: 'draft',
     normal_hours: NORMAL_HOURS,
     status: 'draft',
   };
@@ -114,15 +115,14 @@ const App: React.FC = () => {
     if (error) {
         console.error("Failed to create new week:", error);
         
-        // Robust check for missing column error
         const errorStr = JSON.stringify(error);
-        if (
-            error.code === '42703' || 
-            (error.message && error.message.includes('todo_list')) ||
-            (error.details && error.details.includes('todo_list')) ||
-            errorStr.includes('todo_list')
-        ) {
-            setSchemaError({ code: 'MISSING_TODO_LIST', message: 'Column todo_list missing' });
+        const isTodoListError = 
+            (error.message && (error.message.includes('todo_list') || error.message.includes('todo_status'))) ||
+            (error.details && (error.details.includes('todo_list') || error.details.includes('todo_status'))) ||
+            errorStr.includes('todo_list') || errorStr.includes('todo_status');
+
+        if (error.code === '42703' || isTodoListError) {
+            setSchemaError({ code: 'MISSING_TODO_LIST', message: 'Columns todo_list or todo_status missing' });
         } else {
             const errMsg = getErrorMessage(error);
             alert(`Erreur lors de la création de la semaine: ${errMsg}`);
@@ -265,7 +265,7 @@ const App: React.FC = () => {
                 setSchemaError({ code: 'SCHEMA_CACHE_ERROR', message: errorMessage });
             } else if (errorMessage.includes('column "status"')) {
                 setSchemaError({ ...error, code: 'STATUS_COLUMN_MISSING' });
-            } else if (errorMessage.includes('todo_list')) {
+            } else if (errorMessage.includes('todo_list') || errorMessage.includes('todo_status')) {
                 setSchemaError({ code: 'MISSING_TODO_LIST', message: errorMessage });
             } else {
                 setSchemaError(error);
@@ -304,6 +304,9 @@ const App: React.FC = () => {
     if (updatedTimesheet.todo_list) {
         payload.todo_list = updatedTimesheet.todo_list;
     }
+    if (updatedTimesheet.todo_status) {
+        payload.todo_status = updatedTimesheet.todo_status;
+    }
 
     const { error } = await supabase
         .from('timesheets')
@@ -315,12 +318,12 @@ const App: React.FC = () => {
         setAllTimesheets(prev => prev.map(ts => ts.id === currentTimesheetId ? originalTimesheet : ts));
         
         const errorStr = JSON.stringify(error);
-        if (
-            error.code === '42703' || 
-            (error.message && error.message.includes('todo_list')) ||
-            errorStr.includes('todo_list')
-        ) {
-             setSchemaError({ code: 'MISSING_TODO_LIST', message: 'Column todo_list missing' });
+        const isTodoListError = 
+            (error.message && (error.message.includes('todo_list') || error.message.includes('todo_status'))) ||
+            errorStr.includes('todo_list') || errorStr.includes('todo_status');
+
+        if (error.code === '42703' || isTodoListError) {
+             setSchemaError({ code: 'MISSING_TODO_LIST', message: 'Column todo_list or todo_status missing' });
         } else {
              const errMsg = getErrorMessage(error);
              alert(`Erreur lors de la sauvegarde: ${errMsg}. Veuillez réessayer.`);
@@ -328,6 +331,7 @@ const App: React.FC = () => {
     }
   }, [currentTimesheetId, allTimesheets]);
   
+  // Status change for the Timesheet (Hours)
   const handleTimesheetStatusChange = useCallback(async (newStatus: TimesheetData['status']) => {
     if (!currentTimesheetId) return;
 
@@ -367,6 +371,41 @@ const App: React.FC = () => {
         alert(`Erreur lors du changement de statut :\n\n${errorMessage}\n\nVeuillez réessayer.`);
     }
 }, [currentTimesheetId, allTimesheets]);
+
+ // Status change for the Todo List - STRICTLY SEPARATED from Timesheet Status
+ const handleTodoStatusChange = useCallback(async (newStatus: TimesheetData['todo_status']) => {
+    if (!currentTimesheetId) return;
+
+    const originalTimesheet = allTimesheets.find(ts => ts.id === currentTimesheetId);
+    if (!originalTimesheet) return;
+
+    // Only update todo_status, do NOT touch 'status'
+    const updatedTimesheet = { ...originalTimesheet, todo_status: newStatus, updated_at: new Date().toISOString() };
+    setAllTimesheets(prev => prev.map(ts => ts.id === currentTimesheetId ? updatedTimesheet : ts));
+
+    try {
+        const { error } = await supabase
+          .from('timesheets')
+          .update({ todo_status: newStatus, updated_at: new Date().toISOString() })
+          .eq('id', currentTimesheetId);
+        
+        if (error) throw error;
+
+    } catch (error: unknown) {
+        const errorMessage = getErrorMessage(error);
+        console.error("Failed to update todo status:", errorMessage);
+        
+        setAllTimesheets(prev => prev.map(ts => ts.id === currentTimesheetId ? originalTimesheet : ts));
+
+        // Check for missing column error specifically for todo_status
+        if (errorMessage.includes('todo_status') || errorMessage.includes('column "todo_status" of relation "timesheets" does not exist')) {
+             setSchemaError({ code: 'MISSING_TODO_LIST', message: 'Column todo_status missing' });
+             return;
+        }
+
+        alert(`Erreur lors du changement de statut de la liste:\n\n${errorMessage}`);
+    }
+ }, [currentTimesheetId, allTimesheets]);
 
   const handleTaskHoursChange = (taskId: string, dayIndex: number, hours: number) => {
     updateCurrentTimesheet(ts => ({
@@ -475,7 +514,13 @@ const App: React.FC = () => {
   const nonChargeableTasks = useMemo(() => currentTimesheet?.tasks.filter(task => task.category === TaskCategory.NON_CHARGEABLE) || [], [currentTimesheet]);
   const currentlyUsedTaskNames = useMemo(() => new Set(currentTimesheet?.tasks.filter(t => t.category === TaskCategory.CHARGEABLE).map(t => t.name)), [currentTimesheet]);
   const tasksAvailableToAdd = useMemo(() => availableChargeableTasks.filter(name => !currentlyUsedTaskNames.has(name)), [availableChargeableTasks, currentlyUsedTaskNames]);
-  const isReadOnly = useMemo(() => currentTimesheet?.status === 'submitted' || currentTimesheet?.status === 'approved', [currentTimesheet]);
+  
+  // SEPARATE READ-ONLY FLAGS
+  // 1. Timesheet (Hours) Read-Only Logic
+  const isTimesheetReadOnly = useMemo(() => currentTimesheet?.status === 'submitted' || currentTimesheet?.status === 'approved', [currentTimesheet]);
+  
+  // 2. To-Do List (Objectives) Read-Only Logic
+  const isTodoListReadOnly = useMemo(() => currentTimesheet?.todo_status === 'submitted' || currentTimesheet?.todo_status === 'approved', [currentTimesheet]);
 
   const handleExportTimesheet = () => {
     if (!currentTimesheet) return;
@@ -522,14 +567,16 @@ const App: React.FC = () => {
               onRemoveTask={handleRemoveTask}
               onTaskSelectionChange={handleTaskSelectionChange}
               onExport={handleExportTimesheet}
-              isReadOnly={isReadOnly}
+              isReadOnly={isTimesheetReadOnly} // Pass only Timesheet read-only status
             />;
         case 'todo_list':
             return <TodoListPage 
                 todoList={currentTimesheet?.todo_list || []}
                 onUpdateTodoList={handleUpdateTodoList}
-                isReadOnly={isReadOnly}
-                timesheetStatus={currentTimesheet?.status || 'draft'}
+                isReadOnly={isTodoListReadOnly} // Pass only Todo List read-only status
+                listStatus={currentTimesheet?.todo_status || 'draft'} // Explicitly list status
+                onStatusChange={handleTodoStatusChange}
+                userRole={currentUserProfile.role}
             />;
         case 'detailed_analysis':
             return currentUserProfile.role === 'admin' ? 
@@ -578,7 +625,7 @@ const App: React.FC = () => {
           data={currentTimesheet}
           onHeaderChange={handleHeaderChange}
           onTimesheetStatusChange={handleTimesheetStatusChange}
-          isReadOnly={isReadOnly}
+          isReadOnly={isTimesheetReadOnly} // Pass only Timesheet read-only status
         />
         <main className="p-6">
           {!currentTimesheet ? (

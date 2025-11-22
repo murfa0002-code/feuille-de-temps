@@ -1,3 +1,4 @@
+
 import React from 'react';
 import { TimesheetData, Profile } from '../types';
 import LogoIcon from './icons/LogoIcon';
@@ -76,7 +77,7 @@ const Header: React.FC<HeaderProps> = ({
                         onClick={() => onTimesheetStatusChange('approved')} 
                         className="px-4 py-2 text-sm font-semibold text-white bg-green-600 rounded-md hover:bg-green-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-green-500"
                     >
-                        Approuver
+                        Approuver la feuille de temps
                     </button>
                 );
             }
@@ -86,7 +87,7 @@ const Header: React.FC<HeaderProps> = ({
                         onClick={() => onTimesheetStatusChange('draft')} 
                         className="px-4 py-2 text-sm font-semibold text-gray-800 bg-yellow-400 rounded-md hover:bg-yellow-500 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-yellow-400"
                     >
-                        Dévalider (pour modification)
+                        Dévalider la feuille de temps
                     </button>
                 );
             }
@@ -97,7 +98,7 @@ const Header: React.FC<HeaderProps> = ({
                         onClick={() => onTimesheetStatusChange('submitted')}
                         className="px-4 py-2 text-sm font-semibold text-white bg-blue-600 rounded-md hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500"
                     >
-                        Soumettre pour validation
+                        Soumettre la feuille de temps
                     </button>
                 );
             }
@@ -229,7 +230,7 @@ const Header: React.FC<HeaderProps> = ({
         {data && (
             <div className="mt-4 p-3 bg-gray-50 rounded-lg border border-gray-200 flex justify-between items-center">
                 <div className="flex items-center gap-3">
-                    <span className="text-sm font-semibold text-gray-600">Statut :</span>
+                    <span className="text-sm font-semibold text-gray-600">Statut (Heures) :</span>
                     {getStatusBadge(data.status)}
                 </div>
                 <div>

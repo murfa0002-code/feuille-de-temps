@@ -45,6 +45,7 @@ export interface TimesheetData {
   end_date: string;
   tasks: Task[];
   todo_list?: TodoItem[]; // New field for weekly objectives
+  todo_status?: 'draft' | 'submitted' | 'approved';
   normal_hours: number[];
   status: 'draft' | 'submitted' | 'approved';
   created_at?: string;
